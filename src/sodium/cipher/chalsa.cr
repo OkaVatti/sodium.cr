@@ -1,151 +1,211 @@
-require "../lib_sodium"
-require "../secure_buffer"
+require "../../lib_sodium"
+require "../../secure_buffer"
+require "../../nonce"
 
-module Sodium::Cipher
-  # The great beat you can eat!
-  #
-  # What? They're both dance?
-  abstract class Chalsa
-    include Random
+module Sodium::Cipher::Aead
+  abstract struct Chalsa
+    # Encryption key
+    getter key : SecureBuffer
 
-    getter key : Crypto::Secret
-    getter! nonce : Bytes?
-
-    # Advanced usage.  Don't touch.
-    property offset = 0_u64
-
-    def initialize(key : Crypto::Secret | Bytes, nonce = nil)
-      raise ArgumentError.new("key must be #{key_size} bytes, got #{key.bytesize}") if key.bytesize != key_size
-      @key = key.is_a?(Crypto::Secret) ? key : Sodium::SecureBuffer.copy_from(key)
-      self.nonce = nonce if nonce
+    @[Deprecated("use .random instead of .new")]
+    def initialize
+      @key = SecureBuffer.random key_size
     end
 
-    @[Deprecated("Use constructor to set key")]
-    def key=(key : Bytes | Crypto::Secret) : Crypto::Secret
-      raise ArgumentError.new("key must be #{key_size} bytes, got #{key.bytesize}") if key.bytesize != key_size
-      @key = case key
-             in Crypto::Secret
-               key
-             in Bytes
-               Sodium::SecureBuffer.new key
-             end
-      @key.not_nil!
+    # Initializes with a reference to an existing key.
+    def initialize(@key : SecureBuffer)
+      raise ArgumentError.new("key size mismatch, got #{@key.bytesize}, wanted #{key_size}") if @key.bytesize != key_size
+      @key.readonly
     end
 
-    def nonce=(nonce : Bytes)
-      raise ArgumentError.new("nonce must be #{nonce_size} bytes, got #{nonce.bytesize}") if nonce.bytesize != nonce_size
-      @nonce = nonce
-      nonce
+    # Initializes copying the key to a `SecureBuffer`.
+    def initialize(bytes : Bytes, erase = false)
+      raise ArgumentError.new("key size mismatch, got #{bytes.bytesize}, wanted #{key_size}") if bytes.bytesize != key_size
+      @key = SecureBuffer.new bytes, erase: erase
     end
 
-    @[Deprecated("Use constructor to set key")]
-    def random_key
-      self.key = SecureBuffer.random key_size
+    # Encrypts `src` and returns {ciphertext, nonce}
+    def encrypt(src, dst : Bytes? = nil, *, nonce = nil, additional = nil) : {Bytes, Nonce}
+      src = src.to_slice
+      offset = src.bytesize
+      dst ||= Bytes.new(offset + mac_size)
+      
+      raise ArgumentError.new("dst size must be src.bytesize + mac_size (#{offset + mac_size}), got #{dst.bytesize}") if dst.bytesize != offset + mac_size
+      
+      mac = dst[offset, mac_size]
+
+      _, _, nonce = encrypt_detached src, dst[0, offset], mac: mac, nonce: nonce, additional: additional
+      {dst, nonce}
     end
 
-    def random_nonce
-      self.nonce = ::Random::Secure.random_bytes nonce_size
+    # Decrypts `src` and returns plaintext as a `Crypto::Secret`
+    # Must supply `nonce`
+    # Must supply `additional` if supplied to #encrypt
+    def decrypt_secret(src, dst : Crypto::Secret? = nil, *, nonce : Nonce, additional = nil) : Crypto::Secret
+      src = src.to_slice
+      dst ||= Sodium::SecureBuffer.new(src.bytesize - mac_size)
+      dst.readwrite do |dslice|
+        decrypt src, dslice, nonce: nonce, additional: additional
+      end
+      dst.readonly
     end
 
-    # Xor's src with the cipher output and returns a new Slice
-    def update(src : Bytes) : Bytes
-      update src, Bytes.new(src.bytesize)
+    # Decrypts `src` and returns plaintext
+    # Must supply `nonce`
+    # Must supply `additional` if supplied to #encrypt
+    def decrypt(src, dst : Bytes? = nil, *, nonce : Nonce, additional = nil) : Bytes
+      src = src.to_slice
+      raise ArgumentError.new("src too small, must be at least #{mac_size} bytes") if src.bytesize < mac_size
+      
+      offset = src.bytesize - mac_size
+      mac = src[offset, mac_size]
+
+      decrypt_detached src[0, offset], dst, nonce: nonce, mac: mac, additional: additional
     end
 
-    private FINAL_BYTES = Bytes.new 0
-
-    # Provided for compatibility with block or tagged ciphers.
-    # Stream ciphers don't have additional data.
-    def final
-      FINAL_BYTES
+    # Decrypts `src` and returns plaintext
+    # Must supply `nonce`
+    # Must supply `additional` if supplied to #encrypt
+    def decrypt_string(src, *, nonce : Nonce, additional = nil) : String
+      src = src.to_slice
+      raise ArgumentError.new("src too small, must be at least #{mac_size} bytes") if src.bytesize < mac_size
+      
+      dsize = src.bytesize - mac_size
+      String.new(dsize) do |dst|
+        decrypt src, dst.to_slice(dsize), nonce: nonce, additional: additional
+        {dsize, dsize}
+      end
     end
 
-    # Use as a CSPRNG.
-    def random_bytes(bytes : Bytes) : Bytes
-      update bytes, bytes
-      bytes
+    # Encrypts `src` and returns {mac, ciphertext, nonce}
+    def encrypt_detached(src, dst : Bytes? = nil, *, nonce = nil, mac : Bytes? = nil, additional = nil) : {Bytes, Bytes, Nonce}
+      encrypt_detached src.to_slice, dst, mac: mac, nonce: nonce, additional: additional
     end
 
-    def next_u : UInt8
-      buf = uninitialized UInt8[1]
-      random_bytes buf.to_slice
-      buf.unsafe_as(UInt8)
+    # Decrypts `src` and returns plaintext
+    # Must supply `mac` and `nonce`
+    # Must supply `additional` if supplied to #encrypt
+    def decrypt_detached(src, dst : Bytes? = nil, *, nonce : Nonce, mac : Bytes, additional = nil) : Bytes
+      decrypt_detached src.to_slice, dst, mac: mac, nonce: nonce, additional: additional
     end
 
-    # Always returns false. Sadness...
-    def edible?
-      false
+    # Decrypts `src` and returns plaintext
+    # Must supply `mac` and `nonce`
+    # Must supply `additional` if supplied to #encrypt
+    def decrypt_detached_string(src, *, nonce : Nonce, mac : Bytes, additional = nil) : String
+      dsize = src.bytesize
+      String.new(dsize) do |dst|
+        decrypt_detached src.to_slice, dst.to_slice(dsize), mac: mac, nonce: nonce, additional: additional
+        {dsize, dsize}
+      end
     end
 
-    abstract def update(src : Bytes, dst : Bytes)
+    abstract def encrypt_detached(src : Bytes, dst : Bytes? = nil, *, nonce : Sodium::Nonce? = nil, mac : Bytes? = nil, additional : String | Bytes | Nil = nil) : {Bytes, Bytes, Sodium::Nonce}
+    abstract def decrypt_detached(src : Bytes, dst : Bytes? = nil, *, nonce : Sodium::Nonce, mac : Bytes, additional : String | Bytes | Nil = nil) : Bytes
     abstract def key_size : Int32
+    abstract def mac_size : Int32
     abstract def nonce_size : Int32
 
     def dup
-      self.class.new key: @key.try(&.dup), nonce: @nonce.try(&.dup)
+      self.class.new @key.dup
     end
   end
 
-  {% for key, val in {"XSalsa20" => "xsalsa20", "Salsa20" => "salsa20", "XChaCha20" => "xchacha20", "ChaCha20Ietf" => "chacha20_ietf", "ChaCha20" => "chacha20"} %}
-    # These classes can be used to generate pseudo-random data from a key,
-    # or as building blocks for implementing custom constructions, but they
-    # are not alternatives to `SecretBox`.
+  {% for key, val in {"XChaCha20Poly1305Ietf" => "_xchacha20poly1305_ietf"} %}
+    # Use like `SecretBox` with optional additional authenticated data.
     #
-    # See [https://libsodium.gitbook.io/doc/advanced/stream_ciphers](https://libsodium.gitbook.io/doc/advanced/stream_ciphers) for further information.
+    # See [https://libsodium.gitbook.io/doc/secret-key_cryptography/aead](https://libsodium.gitbook.io/doc/secret-key_cryptography/aead)
     #
-    # This class mimicks the `OpenSSL::Cipher` interface with minor differences.
+    # See `spec/sodium/cipher/aead/chalsa_spec.cr` for examples on how to use this class.
     #
-    # Also provides a `::Random` interface.
-    # * Lacks forward secrecy.
-    # * ~3x faster than `::Random::Secure`
-    #
-    # Use with caution.  When in doubt use `::Random::Secure`
-    #
-    # Possibly safe uses:
-    # * Test data
-    # * Overwriting storage with random data
-    # * Single player video games (maybe)
-    #
-    # See `spec/sodium/cipher/chalsa_spec.cr` for examples on how to use this class.
-    #
-    # WARNING: Not validated against test vectors.  You should probably write some before using this class.
-    class {{ key.id }} < Chalsa
-      KEY_SIZE = LibSodium.crypto_stream_{{ val.id }}_keybytes.to_i32
-      NONCE_SIZE = LibSodium.crypto_stream_{{ val.id }}_noncebytes.to_i32
+    # This implementation provides both combined and detached encryption modes.
+    # Combined mode includes the MAC with the ciphertext.
+    # Detached mode returns the MAC separately.
+    struct {{ key.id }} < Chalsa
+      KEY_SIZE = LibSodium.crypto_aead{{ val.id }}_keybytes.to_i32
+      MAC_SIZE = LibSodium.crypto_aead{{ val.id }}_abytes.to_i32
+      NONCE_SIZE = LibSodium.crypto_aead{{ val.id }}_npubbytes.to_i32
 
+      # Initializes with a new random key.
       def self.random
-        new key: Sodium::SecureBuffer.random(KEY_SIZE), nonce: ::Random::Secure.random_bytes(NONCE_SIZE)
+        key = SecureBuffer.random KEY_SIZE
+        new key
       end
 
-      # Xor's src with the cipher output and places in dst.
-      #
-      # src and dst may be the same object but should not overlap.
-      def update(src : Bytes, dst : Bytes) : Bytes
-        if (k = @key) && (n = @nonce)
-          raise ArgumentError.new("src and dst bytesize must be identical") if src.bytesize != dst.bytesize
+      # `src` and `dst` may be the same object but should not overlap.
+      # May supply `mac`, otherwise a new one is returned.
+      # May supply `additional` for authenticated but unencrypted data.
+      # Returns {mac, ciphertext, nonce}
+      def encrypt_detached(src : Bytes, dst : Bytes? = nil, *, nonce : Sodium::Nonce? = nil, mac : Bytes? = nil, additional : String | Bytes | Nil = nil) : {Bytes, Bytes, Sodium::Nonce}
+        dst ||= Bytes.new src.bytesize
+        nonce ||= Sodium::Nonce.random
+        mac ||= Bytes.new MAC_SIZE
 
-          k.readonly do |kslice|
-            if LibSodium.crypto_stream_{{ val.id }}_xor_ic(dst, src, src.bytesize, n, @offset, kslice) != 0
-              raise Sodium::Error.new("crypto_stream_{{ val.id }}_xor_ic")
-            end
-          end
-          @offset += src.bytesize
-          dst
-        else
-          raise Sodium::Error.new("key and nonce must be set before calling update #{@key.nil?} #{@nonce.nil?}")
+        raise ArgumentError.new("src and dst bytesize must be identical, got src: #{src.bytesize}, dst: #{dst.bytesize}") if src.bytesize != dst.bytesize
+        raise ArgumentError.new("nonce size mismatch, got #{nonce.bytesize}, wanted #{NONCE_SIZE}") unless nonce.bytesize == NONCE_SIZE
+        raise ArgumentError.new("mac size mismatch, got #{mac.bytesize}, wanted #{MAC_SIZE}") unless mac.bytesize == MAC_SIZE
+
+        additional = additional.try &.to_slice
+        ad_len = additional.try(&.bytesize) || 0
+
+        nonce.used!
+        @key.readonly do |kslice|
+          r = LibSodium.crypto_aead{{ val.id }}_encrypt_detached(
+            dst, 
+            mac, 
+            out mac_len, 
+            src, 
+            src.bytesize.to_u64, 
+            additional, 
+            ad_len.to_u64, 
+            nil, 
+            nonce.to_slice, 
+            kslice
+          )
+          raise Sodium::Error.new("crypto_aead{{ val.id }}_encrypt_detached failed with code #{r}") if r != 0
+          raise Sodium::Error.new("crypto_aead{{ val.id }}_encrypt_detached mac size mismatch, expected #{MAC_SIZE}, got #{mac_len}") if mac_len != MAC_SIZE
         end
+
+        {mac, dst, nonce}
       end
 
-      def self.key_size : Int32
-        KEY_SIZE
-      end
+      # `src` and `dst` may be the same object but should not overlap.
+      # Must supply `mac` and `nonce`
+      # Must supply `additional` if supplied to #encrypt_detached
+      # Returns decrypted plaintext
+      def decrypt_detached(src : Bytes, dst : Bytes? = nil, *, nonce : Sodium::Nonce, mac : Bytes, additional : String | Bytes | Nil = nil) : Bytes
+        dst ||= Bytes.new src.bytesize
+        
+        raise ArgumentError.new("src and dst bytesize must be identical, got src: #{src.bytesize}, dst: #{dst.bytesize}") if src.bytesize != dst.bytesize
+        raise ArgumentError.new("nonce size mismatch, got #{nonce.bytesize}, wanted #{NONCE_SIZE}") unless nonce.bytesize == NONCE_SIZE
+        raise ArgumentError.new("mac size mismatch, got #{mac.bytesize}, wanted #{MAC_SIZE}") unless mac.bytesize == MAC_SIZE
 
-      def self.nonce_size : Int32
-        NONCE_SIZE
+        additional = additional.try &.to_slice
+        ad_len = additional.try(&.bytesize) || 0
+
+        r = @key.readonly do |kslice|
+          LibSodium.crypto_aead{{ val.id }}_decrypt_detached(
+            dst, 
+            nil, 
+            src, 
+            src.bytesize.to_u64, 
+            mac, 
+            additional, 
+            ad_len.to_u64, 
+            nonce.to_slice, 
+            kslice
+          )
+        end
+        raise Sodium::Error::DecryptionFailed.new("crypto_aead{{ val.id }}_decrypt_detached failed (authentication failed or corrupted data)") if r != 0
+        dst
       end
 
       def key_size : Int32
         KEY_SIZE
+      end
+
+      def mac_size : Int32
+        MAC_SIZE
       end
 
       def nonce_size : Int32
