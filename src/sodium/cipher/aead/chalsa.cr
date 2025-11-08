@@ -26,11 +26,15 @@ module Sodium::Cipher::Aead
 
     # Encrypts `src` and returns {ciphertext, nonce}
     def encrypt(src, dst : Bytes? = nil, *, nonce = nil, additional = nil) : {Bytes, Nonce}
+      src = src.to_slice
       offset = src.bytesize
       dst ||= Bytes.new(offset + mac_size)
+      
+      raise ArgumentError.new("dst size must be src.bytesize + mac_size (#{offset + mac_size}), got #{dst.bytesize}") if dst.bytesize != offset + mac_size
+      
       mac = dst[offset, mac_size]
 
-      _, _, nonce = encrypt_detached src.to_slice, dst[0, offset], mac: mac, nonce: nonce, additional: additional
+      _, _, nonce = encrypt_detached src, dst[0, offset], mac: mac, nonce: nonce, additional: additional
       {dst, nonce}
     end
 
@@ -38,6 +42,7 @@ module Sodium::Cipher::Aead
     # Must supply `nonce`
     # Must supply `additional` if supplied to #encrypt
     def decrypt_secret(src, dst : Crypto::Secret? = nil, *, nonce : Nonce, additional = nil) : Crypto::Secret
+      src = src.to_slice
       dst ||= Sodium::SecureBuffer.new(src.bytesize - mac_size)
       dst.readwrite do |dslice|
         decrypt src, dslice, nonce: nonce, additional: additional
@@ -50,6 +55,8 @@ module Sodium::Cipher::Aead
     # Must supply `additional` if supplied to #encrypt
     def decrypt(src, dst : Bytes? = nil, *, nonce : Nonce, additional = nil) : Bytes
       src = src.to_slice
+      raise ArgumentError.new("src too small, must be at least #{mac_size} bytes") if src.bytesize < mac_size
+      
       offset = src.bytesize - mac_size
       mac = src[offset, mac_size]
 
@@ -60,6 +67,9 @@ module Sodium::Cipher::Aead
     # Must supply `nonce`
     # Must supply `additional` if supplied to #encrypt
     def decrypt_string(src, *, nonce : Nonce, additional = nil) : String
+      src = src.to_slice
+      raise ArgumentError.new("src too small, must be at least #{mac_size} bytes") if src.bytesize < mac_size
+      
       dsize = src.bytesize - mac_size
       String.new(dsize) do |dst|
         decrypt src, dst.to_slice(dsize), nonce: nonce, additional: additional
@@ -69,20 +79,20 @@ module Sodium::Cipher::Aead
 
     # Encrypts `src` and returns {mac, ciphertext, nonce}
     def encrypt_detached(src, dst : Bytes? = nil, *, nonce = nil, mac : Bytes? = nil, additional = nil) : {Bytes, Bytes, Nonce}
-      encrypt_detached src.to_slice, mac: mac, nonce: nonce, additional: additional
+      encrypt_detached src.to_slice, dst, mac: mac, nonce: nonce, additional: additional
     end
 
     # Decrypts `src` and returns plaintext
     # Must supply `mac` and `nonce`
     # Must supply `additional` if supplied to #encrypt
-    def decrypt_detached(src, dst : Bytes? = nil, *, nonce = nil, mac : Bytes? = nil, additional = nil) : Bytes
-      decrypt_detached src.to_slice, mac: mac, nonce: nonce, additional: additional
+    def decrypt_detached(src, dst : Bytes? = nil, *, nonce : Nonce, mac : Bytes, additional = nil) : Bytes
+      decrypt_detached src.to_slice, dst, mac: mac, nonce: nonce, additional: additional
     end
 
     # Decrypts `src` and returns plaintext
     # Must supply `mac` and `nonce`
     # Must supply `additional` if supplied to #encrypt
-    def decrypt_detached_string(src, *, nonce = nil, mac : Bytes? = nil, additional = nil) : String
+    def decrypt_detached_string(src, *, nonce : Nonce, mac : Bytes, additional = nil) : String
       dsize = src.bytesize
       String.new(dsize) do |dst|
         decrypt_detached src.to_slice, dst.to_slice(dsize), mac: mac, nonce: nonce, additional: additional
@@ -108,7 +118,9 @@ module Sodium::Cipher::Aead
     #
     # See `spec/sodium/cipher/aead/chalsa_spec.cr` for examples on how to use this class.
     #
-    # WARNING: Not validated against test vectors.  You should probably write some before using this class.
+    # This implementation provides both combined and detached encryption modes.
+    # Combined mode includes the MAC with the ciphertext.
+    # Detached mode returns the MAC separately.
     struct {{ key.id }} < Chalsa
       KEY_SIZE = LibSodium.crypto_aead{{ val.id }}_keybytes.to_i32
       MAC_SIZE = LibSodium.crypto_aead{{ val.id }}_abytes.to_i32
@@ -122,13 +134,14 @@ module Sodium::Cipher::Aead
 
       # `src` and `dst` may be the same object but should not overlap.
       # May supply `mac`, otherwise a new one is returned.
-      # May supply `additional`
+      # May supply `additional` for authenticated but unencrypted data.
+      # Returns {mac, ciphertext, nonce}
       def encrypt_detached(src : Bytes, dst : Bytes? = nil, *, nonce : Sodium::Nonce? = nil, mac : Bytes? = nil, additional : String | Bytes | Nil = nil) : {Bytes, Bytes, Sodium::Nonce}
         dst ||= Bytes.new src.bytesize
         nonce ||= Sodium::Nonce.random
         mac ||= Bytes.new MAC_SIZE
 
-        raise ArgumentError.new("src and dst bytesize must be identical #{src.bytesize} != #{dst.bytesize}") if src.bytesize != dst.bytesize
+        raise ArgumentError.new("src and dst bytesize must be identical, got src: #{src.bytesize}, dst: #{dst.bytesize}") if src.bytesize != dst.bytesize
         raise ArgumentError.new("nonce size mismatch, got #{nonce.bytesize}, wanted #{NONCE_SIZE}") unless nonce.bytesize == NONCE_SIZE
         raise ArgumentError.new("mac size mismatch, got #{mac.bytesize}, wanted #{MAC_SIZE}") unless mac.bytesize == MAC_SIZE
 
@@ -137,9 +150,20 @@ module Sodium::Cipher::Aead
 
         nonce.used!
         @key.readonly do |kslice|
-          r = LibSodium.crypto_aead{{ val.id }}_encrypt_detached(dst, mac, out mac_len, src, src.bytesize, additional, ad_len, nil, nonce.to_slice, kslice)
-          raise Sodium::Error.new("crypto_aead_{{ val.id }}_encrypt_detached") if r != 0
-          raise Sodium::Error.new("crypto_aead_{{ val.id }}_encrypt_detached mac size mismatch") if mac_len != MAC_SIZE
+          r = LibSodium.crypto_aead{{ val.id }}_encrypt_detached(
+            dst, 
+            mac, 
+            out mac_len, 
+            src, 
+            src.bytesize.to_u64, 
+            additional, 
+            ad_len.to_u64, 
+            nil, 
+            nonce.to_slice, 
+            kslice
+          )
+          raise Sodium::Error.new("crypto_aead{{ val.id }}_encrypt_detached failed with code #{r}") if r != 0
+          raise Sodium::Error.new("crypto_aead{{ val.id }}_encrypt_detached mac size mismatch, expected #{MAC_SIZE}, got #{mac_len}") if mac_len != MAC_SIZE
         end
 
         {mac, dst, nonce}
@@ -148,19 +172,31 @@ module Sodium::Cipher::Aead
       # `src` and `dst` may be the same object but should not overlap.
       # Must supply `mac` and `nonce`
       # Must supply `additional` if supplied to #encrypt_detached
+      # Returns decrypted plaintext
       def decrypt_detached(src : Bytes, dst : Bytes? = nil, *, nonce : Sodium::Nonce, mac : Bytes, additional : String | Bytes | Nil = nil) : Bytes
         dst ||= Bytes.new src.bytesize
-        raise ArgumentError.new("src and dst bytesize must be identical #{src.bytesize} != #{dst.bytesize}") if src.bytesize != dst.bytesize
+        
+        raise ArgumentError.new("src and dst bytesize must be identical, got src: #{src.bytesize}, dst: #{dst.bytesize}") if src.bytesize != dst.bytesize
         raise ArgumentError.new("nonce size mismatch, got #{nonce.bytesize}, wanted #{NONCE_SIZE}") unless nonce.bytesize == NONCE_SIZE
         raise ArgumentError.new("mac size mismatch, got #{mac.bytesize}, wanted #{MAC_SIZE}") unless mac.bytesize == MAC_SIZE
 
+        additional = additional.try &.to_slice
         ad_len = additional.try(&.bytesize) || 0
 
         r = @key.readonly do |kslice|
-          LibSodium.crypto_aead{{ val.id }}_decrypt_detached(dst, nil, src, src.bytesize, mac, additional, ad_len, nonce.
-          to_slice, kslice)
+          LibSodium.crypto_aead{{ val.id }}_decrypt_detached(
+            dst, 
+            nil, 
+            src, 
+            src.bytesize.to_u64, 
+            mac, 
+            additional, 
+            ad_len.to_u64, 
+            nonce.to_slice, 
+            kslice
+          )
         end
-        raise Sodium::Error::DecryptionFailed.new("crypto_aead_{{ val.id }}_decrypt_detached") if r != 0
+        raise Sodium::Error::DecryptionFailed.new("crypto_aead{{ val.id }}_decrypt_detached failed (authentication failed or corrupted data)") if r != 0
         dst
       end
 
