@@ -33,16 +33,33 @@ jobs:
         with:
           crystal: ${{ matrix.crystal }}
 
-      - name: Install system libsodium (Linux)
+      # Install build dependencies for libsodium
+      - name: Install build tools (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsodium-dev
+          sudo apt-get install -y build-essential wget openssl
 
-      - name: Install system libsodium (macOS)
+      - name: Install build tools (macOS)
         if: runner.os == 'macOS'
-        run: brew install libsodium
+        run: |
+          brew install wget openssl
+          # macOS already has make, clang, etc.
 
+      # Build libsodium from source (static library)
+      - name: Build libsodium
+        env:
+          LIBSODIUM_INSTALL: 1
+          SODIUM_BUILD_VERBOSE: 1
+        run: |
+          ./build/libsodium_install.sh
+
+      # Verify the static library was created
+      - name: Verify libsodium build
+        run: |
+          ls -la build/libsodium/lib/libsodium.a
+
+      # Cache shards
       - name: Cache shards
         uses: actions/cache@v4
         with:
@@ -51,12 +68,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-shards-
 
+      # Install shard dependencies
       - name: Install shard dependencies
         run: shards install
 
+      # Run tests (will use the custom libsodium via pkg-libs.sh)
       - name: Run tests
+        env:
+          LIBSODIUM_INSTALL: 1
         run: crystal spec --error-trace --order random
 
+      # Run linter (only on one configuration)
       - name: Run linter
         if: matrix.lint
         run: bin/ameba
