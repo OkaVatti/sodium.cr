@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+set -eu
 
 # Overridable.
 if [ -z "${LIBSODIUM_BUILD_DIR:-}" ]; then
@@ -13,12 +14,56 @@ fi
 # Minimum required version.
 MIN_LIBSODIUM_VERSION="${MIN_LIBSODIUM_VERSION:-1.0.22}"
 
+EXPLICIT_BZERO_SHIM_C="$LIBSODIUM_BUILD_DIR/explicit_bzero_shim.c"
+EXPLICIT_BZERO_SHIM_O="$LIBSODIUM_BUILD_DIR/explicit_bzero_shim.o"
+EXPLICIT_BZERO_SHIM_A="$LIBSODIUM_BUILD_DIR/libexplicit_bzero_shim.a"
+
 export LIBSODIUM_BUILD_DIR
 export LIBSODIUM_INSTALL_PATH
 export MIN_LIBSODIUM_VERSION
+export EXPLICIT_BZERO_SHIM_C
+export EXPLICIT_BZERO_SHIM_O
+export EXPLICIT_BZERO_SHIM_A
 
 version() {
   echo "$1" | awk -F. '{ printf("%d%03d%03d%03d\n", $1, $2, $3, $4); }'
+}
+
+is_macos() {
+  [ "$(uname -s 2>/dev/null || printf '')" = "Darwin" ]
+}
+
+write_explicit_bzero_shim_source() {
+  mkdir -p "$LIBSODIUM_BUILD_DIR"
+
+  cat > "$EXPLICIT_BZERO_SHIM_C" <<'EOF'
+#include <stddef.h>
+
+void explicit_bzero(void *buf, size_t len) {
+    volatile unsigned char *p = (volatile unsigned char *)buf;
+    while (len-- > 0) {
+        *p++ = 0;
+    }
+}
+EOF
+}
+
+ensure_explicit_bzero_shim() {
+  if ! is_macos; then
+    return 0
+  fi
+
+  mkdir -p "$LIBSODIUM_BUILD_DIR"
+
+  if [ ! -f "$EXPLICIT_BZERO_SHIM_C" ]; then
+    write_explicit_bzero_shim_source
+  fi
+
+  if [ ! -f "$EXPLICIT_BZERO_SHIM_A" ] || [ "$EXPLICIT_BZERO_SHIM_C" -nt "$EXPLICIT_BZERO_SHIM_A" ]; then
+    : "${CC:=cc}"
+    "${CC}" -std=c11 -O2 -c "$EXPLICIT_BZERO_SHIM_C" -o "$EXPLICIT_BZERO_SHIM_O"
+    ar rcs "$EXPLICIT_BZERO_SHIM_A" "$EXPLICIT_BZERO_SHIM_O"
+  fi
 }
 
 if [ "${LIBSODIUM_INSTALL:-0}" = "1" ]; then

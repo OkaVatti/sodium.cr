@@ -6,36 +6,27 @@ on:
   pull_request:
     branches: [mother]
 
-permissions:
-  contents: read
-
 jobs:
   test:
-    env:
-      LIBSODIUM_INSTALL: "1"
-      MACOSX_DEPLOYMENT_TARGET: "11.0" # minimum target, though, we test against latest
-      SDKROOT: /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
-
     name: "crystal ${{ matrix.crystal }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
+
+    env:
+      LIBSODIUM_INSTALL: "1"
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
 
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-        crystal:
-          - "1.10.0"
-          - "1.20.1"
-          - latest
+        os: [ubuntu-latest, macos-latest]
+        crystal: ["1.10.0", "1.20.1", latest]
         include:
           - os: ubuntu-latest
             crystal: latest
             lint: true
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Install Crystal
         uses: crystal-lang/install-crystal@v1
@@ -46,16 +37,16 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential wget pkg-config
+          sudo apt-get install -y build-essential wget pkg-config openssl
 
       - name: Install build tools (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install wget libsodium pkg-config
+          brew update
+          brew install wget pkg-config openssl@3 libsodium
 
       - name: Build libsodium
         env:
-          LIBSODIUM_INSTALL: "1"
           SODIUM_BUILD_VERBOSE: "1"
         run: ./build/libsodium_install.sh
 
@@ -63,7 +54,7 @@ jobs:
         run: test -f build/libsodium/lib/libsodium.a
 
       - name: Cache shards
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: lib
           key: ${{ runner.os }}-shards-${{ hashFiles('shard.lock') }}
@@ -71,13 +62,9 @@ jobs:
             ${{ runner.os }}-shards-
 
       - name: Install shard dependencies
-        env:
-          LIBSODIUM_INSTALL: "1"
         run: shards install
 
       - name: Run tests
-        env:
-          LIBSODIUM_INSTALL: "1"
         run: crystal spec --error-trace --order random
 
       - name: Run linter

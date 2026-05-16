@@ -41,6 +41,14 @@ get_cpu_count() {
   echo 1
 }
 
+build_explicit_bzero_shim() {
+  if ! is_macos; then
+    return 0
+  fi
+
+  ensure_explicit_bzero_shim
+}
+
 if [ ! -f "$LIBSODIUM_INSTALL_PATH/include/sodium.h" ]; then
   [ -n "${SODIUM_BUILD_DEBUG:-}" ] && set -x
 
@@ -84,10 +92,14 @@ if [ ! -f "$LIBSODIUM_INSTALL_PATH/include/sodium.h" ]; then
     touch .make.install.done
   fi
 
+  build_explicit_bzero_shim
+
   if [ -n "${SODIUM_BUILD_VERBOSE:-}" ]; then
     echo "Custom libsodium built at $LIBSODIUM_INSTALL_PATH" >&2
   fi
 else
+  build_explicit_bzero_shim
+
   if [ -n "${SODIUM_BUILD_VERBOSE:-}" ]; then
     echo "Custom libsodium already exists at $LIBSODIUM_INSTALL_PATH" >&2
   fi
