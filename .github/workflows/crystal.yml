@@ -12,7 +12,9 @@ permissions:
 jobs:
   test:
     env:
-      MACOSX_DEPLOYMENT_TARGET: "26.0"
+      LIBSODIUM_INSTALL: "1"
+      MACOSX_DEPLOYMENT_TARGET: "11.0" # minimum target, though, we test against latest
+      SDKROOT: /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
 
     name: "crystal ${{ matrix.crystal }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
