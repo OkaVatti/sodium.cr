@@ -17,7 +17,6 @@ jobs:
           - ubuntu-latest
           - macos-latest
         crystal:
-          - "1.5.0"
           - "1.10.0"
           - "1.20.1"
           - latest
@@ -25,6 +24,9 @@ jobs:
           - os: ubuntu-latest
             crystal: latest
             lint: true
+
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - uses: actions/checkout@v4
