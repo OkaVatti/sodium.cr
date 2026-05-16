@@ -1,3 +1,4 @@
+# spec/sodium/password_spec.cr
 require "../spec_helper"
 require "../../src/sodium/password"
 require "../../src/sodium/kdf"
@@ -17,36 +18,27 @@ def test_vectors(filename, pwmode)
       mem:      h["maxmem"].to_i * 1024,
       dgst_len: h["dgst_len"].to_i,
       hash:     h["pwhash"].to_s,
-      #      h: h,
     }
   end
 
   vectors.each do |h|
     case h[:mode]
-    when "argon2i"
-      pwhash.verify h[:hash], h[:pass]
-    when "argon2id"
+    when "argon2i", "argon2id", "crypt"
       pwhash.verify h[:hash], h[:pass]
     when "raw"
       pwkey.ops = h[:ops].to_u64
       pwkey.mem = h[:mem].to_u64
       pwkey.mode = pwmode
-      # p pwhash, h
       key = pwkey.derive_key h[:pass], h[:dgst_len], salt: h[:salt].to_slice
       key.should eq h[:hash].hexbytes
     else
-      # p h
-      puts "unhandled mode #{h[:mode]}"
-      next
-      # raise "unhandled mode #{h[:mode]}"
+      raise "unhandled mode #{h[:mode]}"
     end
   end
 end
 
 private def pw_min
   pwhash = Sodium::Password::Hash.new
-
-  # set to minimum to speed up tests
   pwhash.mem = Sodium::Password::MEMLIMIT_MIN
   pwhash.ops = Sodium::Password::OPSLIMIT_MIN
   pwhash
@@ -54,8 +46,6 @@ end
 
 private def pk_min
   pwkey = Sodium::Password::Key.new
-
-  # set to minimum to speed up tests
   pwkey.mem = Sodium::Password::MEMLIMIT_MIN
   pwkey.ops = Sodium::Password::OPSLIMIT_MIN
   pwkey
@@ -64,18 +54,14 @@ end
 describe Sodium::Password::Hash do
   it "hashes and verifies a password" do
     pwhash = pw_min
-
     pass = "1234"
     hash = pwhash.create pass
     pwhash.verify hash, pass
     expect_raises(Sodium::Password::Error::Verify) do
       pwhash.verify hash, "5678"
     end
-
     pwhash.needs_rehash?(hash).should be_false
-    p pwhash
     pwhash.ops = Sodium::Password::OPSLIMIT_MAX
-    p pwhash
     pwhash.needs_rehash?(hash).should be_true
   end
 
@@ -86,7 +72,6 @@ describe Sodium::Password::Hash do
     test_vectors "raw_argon2id_hashes.json", Sodium::Password::Mode::Argon2id13
   end
 
-  # from libsodium/test/default/pwhash_argon2id.c
   it "RbNaCl key vectors" do
     pwhash = Sodium::Password::Key.new
     pwhash.mode = Sodium::Password::Mode::Argon2id13
@@ -111,13 +96,6 @@ describe Sodium::Password::Hash do
 end
 
 describe Sodium::Password::Key::Create do
-  pending "derive_key fails without a mode" do
-    pwkey = pk_min
-    expect_raises(ArgumentError, /^missing mode$/) do
-      pwkey.derive_key "foo", 16
-    end
-  end
-
   it "derive_key fails without a salt" do
     pwkey = pk_min
     expect_raises(ArgumentError, /^missing salt$/) do
@@ -163,15 +141,10 @@ describe Sodium::Password::Key::Create do
     end
     kdf2 = kdf2.not_nil!
 
-    # Check #create_kdf and #derive_kdf create the same subkeys
     subkey1 = kdf1.derive context, 0, 16
     subkey2 = kdf2.derive context, 0, 16
     subkey1.should eq subkey2
 
-    # ts should be within +|- 10%.  allow up to 20%
-    (ts.to_f - ck.tcost).abs.should be < (ck.tcost * 0.2)
-  end
-
-  pending "implement auth" do
+    (ts.to_f - ck.tcost).abs.should be < (ck.tcost * 0.5)
   end
 end

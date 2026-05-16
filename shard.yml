@@ -1,10 +1,11 @@
 ---
 name: sodium
-version: 1.2.3
+version: 1.3.0
 authors:
 - Andrew Hamon <andrew@hamon.cc>
 - Didactic Drunk <1479616+didactic-drunk@users.noreply.github.com>
-crystal: ">= 1.0.0"
+- OkaVatti <okavatti@proton.me>
+crystal: ">= 1.20.1"
 targets:
   blake2b_hash:
     main: examples/blake2b_hash.cr
@@ -15,7 +16,7 @@ dependencies:
     github: didactic-drunk/crypto-secret.cr
     branch: main
 libraries:
-  libsodium: ">= 1.0.18"
+  libsodium: ">= 1.0.22"
 license: MIT
 scripts:
   postinstall: "./build/libsodium_install.sh"

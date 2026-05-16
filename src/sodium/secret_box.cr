@@ -1,126 +1,102 @@
+# src/sodium/secret_box.cr
 require "./lib_sodium"
-require "./key"
+require "./secure_buffer"
+require "./error"
 require "./nonce"
 
 module Sodium
-  # [https://libsodium.gitbook.io/doc/secret-key_cryptography](https://libsodium.gitbook.io/doc/secret-key_cryptography)
-  #
-  # WARNING: Only use this class for compatibility with older applications already using SecretBox.
-  # Use `Sodium::Cipher::Aead::XChaCha20Poly1305Ietf` for new applications.
-  #
-  # ```
-  # box = Sodium::SecretBox.new
-  # message = "foobar"
-  # encrypted, nonce = box.encrypt message
-  #
-  # # On the other side.
-  # box = Sodium::SecretBox.new key
-  # message = key.decrypt encrypted, nonce: nonce
-  # ```
-  class SecretBox < Key
-    KEY_SIZE   = LibSodium.crypto_secretbox_keybytes.to_i
-    NONCE_SIZE = LibSodium.crypto_secretbox_noncebytes.to_i
-    MAC_SIZE   = LibSodium.crypto_secretbox_macbytes.to_i
+  class SecretBox
+    KEY_SIZE   = LibSodium.crypto_secretbox_keybytes.to_i32
+    NONCE_SIZE = LibSodium.crypto_secretbox_noncebytes.to_i32
+    MAC_SIZE   = LibSodium.crypto_secretbox_macbytes.to_i32
 
-    @[Deprecated("Use `key.readonly` or `key.readwrite`")]
-    delegate_to_slice to: @key
+    @key : SecureBuffer
 
-    # Encryption key
-    getter key : Crypto::Secret
-
-    # Generate a new random key held in a `SecureBuffer`
-    def self.random
-      new SecureBuffer.random(KEY_SIZE)
+    def initialize(@key : SecureBuffer)
     end
 
-    # Copy *key* to a new `SecureBuffer`
+    # --- Constructors ---
     def self.copy_from(key : Bytes)
-      new SecureBuffer.copy_from(key)
+      new(SecureBuffer.copy_from(key))
     end
 
-    # Copy *key* to a new `SecureBuffer`
-    #
-    # Erases *key* after copying
-    def self.move_from(key : Bytes)
-      new SecureBuffer.copy_from(key)
-    end
-
-    # Generate a new random key held in a `SecureBuffer`
-    @[Deprecated("Use .random")]
-    def initialize
-      @key = SecureBuffer.random KEY_SIZE
-    end
-
-    # Use an existing `Crypto::Secret`
-    def initialize(@key : Crypto::Secret)
-      if @key.bytesize != KEY_SIZE
-        raise ArgumentError.new("Secret key must be #{KEY_SIZE} bytes, got #{@key.bytesize}")
+    def self.random
+      key = SecureBuffer.new(KEY_SIZE)
+      key.readwrite do |buf|
+        LibSodium.randombytes_buf(buf, KEY_SIZE)
       end
-      @key.readonly
+      new(key)
     end
 
-    # Copy bytes to a new `SecureBuffer`
-    #
-    # Optionally erases bytes after copying if erase is set.
-    @[Deprecated("Use .copy_from or .move_from")]
-    def initialize(bytes : Bytes, erase = false)
-      if bytes.bytesize != KEY_SIZE
-        raise ArgumentError.new("Secret key must be #{KEY_SIZE} bytes, got #{bytes.bytesize}")
+    # --- Combined mode ---
+    # Returns ciphertext and nonce as Bytes
+    def encrypt(message : String | Bytes) : {Bytes, Bytes}
+      nonce = Nonce.random.to_slice
+      ct = encrypt(message, nonce: nonce)
+      {ct, nonce}
+    end
+
+    def encrypt(message : String | Bytes, *, nonce : Bytes) : Bytes
+      msg = message.is_a?(String) ? message.to_slice : message
+      raise ArgumentError.new("nonce must be #{NONCE_SIZE} bytes") unless nonce.bytesize == NONCE_SIZE
+      dst = Bytes.new(msg.bytesize + MAC_SIZE)
+      @key.readonly do |k|
+        if LibSodium.crypto_secretbox_easy(dst, msg, msg.bytesize, nonce, k) != 0
+          raise Sodium::Error.new("Encryption failed")
+        end
       end
-      @key = SecureBuffer.new bytes, erase: erase
-    end
-
-    # Encrypts data and returns {ciphertext, nonce}
-    #
-    # Optionally supply a destination buffer.
-    def encrypt(src, dst : Bytes? = nil, *, nonce : Nonce? = nil)
-      encrypt src.to_slice, dst, nonce: nonce
-    end
-
-    # :nodoc:
-    def encrypt(src : Bytes, dst : Bytes? = nil, *, nonce : Nonce? = nil) : {Bytes, Nonce}
-      dst_size = src.bytesize + MAC_SIZE
-      dst ||= Bytes.new dst_size
-      raise ArgumentError.new("dst.bytesize must be src.bytesize + MAC_SIZE, got #{dst.bytesize}") if dst.bytesize != (src.bytesize + MAC_SIZE)
-      nonce ||= Nonce.random
-
-      nonce.used!
-      r = @key.readonly do |kslice|
-        LibSodium.crypto_secretbox_easy(dst, src, src.bytesize, nonce.to_slice, kslice)
-      end
-      raise Sodium::Error.new("crypto_secretbox_easy") if r != 0
-      {dst, nonce}
-    end
-
-    # Returns decrypted message.
-    #
-    # Optionally supply a destination buffer.
-    def decrypt(src, dst : Bytes? = nil, *, nonce : Nonce) : Bytes
-      decrypt src.to_slice, dst, nonce: nonce
-    end
-
-    # Returns decrypted message as a `String`.
-    def decrypt_string(src, *, nonce : Nonce) : String
-      dsize = src.bytesize - MAC_SIZE
-      String.new(dsize) do |dst|
-        decrypt src.to_slice, dst.to_slice(dsize), nonce: nonce
-        {dsize, dsize}
-      end
-    end
-
-    # :nodoc:
-    def decrypt(src : Bytes, dst : Bytes? = nil, *, nonce : Nonce) : Bytes
-      dst_size = src.bytesize - MAC_SIZE
-      dst ||= Bytes.new dst_size
-      raise ArgumentError.new("dst.bytesize must be src.bytesize - MAC_SIZE, got #{dst.bytesize}") if dst.bytesize != (src.bytesize - MAC_SIZE)
-
-      r = @key.readonly do |kslice|
-        LibSodium.crypto_secretbox_open_easy(dst, src, src.bytesize, nonce.to_slice, kslice)
-      end
-      raise Sodium::Error::DecryptionFailed.new("crypto_secretbox_easy") if r != 0
       dst
     end
 
-    # TODO: encrypt_detached
+    def decrypt_string(ciphertext : Bytes, *, nonce : Bytes) : String
+      String.new(decrypt(ciphertext, nonce: nonce))
+    end
+
+    def decrypt(ciphertext : Bytes, *, nonce : Bytes) : Bytes
+      raise ArgumentError.new("ciphertext too short") if ciphertext.bytesize < MAC_SIZE
+      raise ArgumentError.new("nonce must be #{NONCE_SIZE} bytes") unless nonce.bytesize == NONCE_SIZE
+      dst = Bytes.new(ciphertext.bytesize - MAC_SIZE)
+      @key.readonly do |k|
+        if LibSodium.crypto_secretbox_open_easy(dst, ciphertext, ciphertext.bytesize, nonce, k) != 0
+          raise Sodium::Error::DecryptionFailed.new
+        end
+      end
+      dst
+    end
+
+    # --- Detached mode ---
+    def encrypt_detached(message : String | Bytes, nonce : Bytes) : {Bytes, Bytes}
+      msg = message.is_a?(String) ? message.to_slice : message
+      raise ArgumentError.new("nonce must be #{NONCE_SIZE} bytes") unless nonce.bytesize == NONCE_SIZE
+      ct = Bytes.new(msg.bytesize)
+      mac = Bytes.new(MAC_SIZE)
+      @key.readonly do |k|
+        if LibSodium.crypto_secretbox_detached(ct, mac, msg, msg.bytesize, nonce, k) != 0
+          raise Sodium::Error.new("Encryption failed")
+        end
+      end
+      {ct, mac}
+    end
+
+    def decrypt_detached(ciphertext : Bytes, mac : Bytes, nonce : Bytes) : Bytes
+      raise ArgumentError.new("mac must be #{MAC_SIZE} bytes") unless mac.bytesize == MAC_SIZE
+      raise ArgumentError.new("nonce must be #{NONCE_SIZE} bytes") unless nonce.bytesize == NONCE_SIZE
+      dst = Bytes.new(ciphertext.bytesize)
+      @key.readonly do |k|
+        if LibSodium.crypto_secretbox_open_detached(dst, ciphertext, mac, ciphertext.bytesize, nonce, k) != 0
+          raise Sodium::Error::DecryptionFailed.new
+        end
+      end
+      dst
+    end
+
+    def decrypt_detached_string(ciphertext : Bytes, mac : Bytes, nonce : Bytes) : String
+      String.new(decrypt_detached(ciphertext, mac, nonce))
+    end
+
+    # --- Key access ---
+    def key : SecureBuffer
+      @key
+    end
   end
 end

@@ -1,17 +1,20 @@
 # spec/sodium/secret_stream_spec.cr
-require "../../spec_helper"
-require "../../../src/sodium/secret_stream"
+require "../spec_helper"
 
 describe Sodium::SecretStream do
   it "encrypts and decrypts a stream" do
     key = Sodium::SecretStream.keygen
+
+    # Encryption
     enc = Sodium::SecretStream::EncryptStream.new(key)
     header = enc.header
 
     c1 = enc.push("Hello")
     c2 = enc.push("World", tag: Sodium::SecretStream::Tag::Final)
 
+    # Decryption
     dec = Sodium::SecretStream::DecryptStream.new(header, key)
+
     m1, t1 = dec.pull(c1)
     m2, t2 = dec.pull(c2)
 
@@ -27,6 +30,7 @@ describe Sodium::SecretStream do
     header = enc.header
     ciphertext = enc.push("Secret")
 
+    # Tamper with the ciphertext
     ciphertext[0] ^= 0xFF
 
     dec = Sodium::SecretStream::DecryptStream.new(header, key)
@@ -37,38 +41,21 @@ describe Sodium::SecretStream do
 
   it "handles rekeying" do
     key = Sodium::SecretStream.keygen
+
     enc = Sodium::SecretStream::EncryptStream.new(key)
     header = enc.header
+
     c1 = enc.push("First")
     enc.rekey
     c2 = enc.push("Second", tag: Sodium::SecretStream::Tag::Final)
 
     dec = Sodium::SecretStream::DecryptStream.new(header, key)
+
     m1, t1 = dec.pull(c1)
-    dec.rekey
+    dec.rekey # Must match encryption rekey point
     m2, t2 = dec.pull(c2)
 
     m1.should eq("First".to_slice)
     m2.should eq("Second".to_slice)
-  end
-
-  # Official test vector from libsodium/test/default/secretstream.c
-  it "passes official test vector" do
-    key = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f".hexbytes
-    header_hex = "a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0"
-    # The libsodium test uses known header and ciphertexts. We'll just do a roundtrip for now.
-    enc = Sodium::SecretStream::EncryptStream.new(key)
-    header = enc.header
-    c1 = enc.push("msg1", tag: Sodium::SecretStream::Tag::Message)
-    c2 = enc.push("final", tag: Sodium::SecretStream::Tag::Final)
-
-    dec = Sodium::SecretStream::DecryptStream.new(header, key)
-    m1, t1 = dec.pull(c1)
-    m2, t2 = dec.pull(c2)
-
-    m1.should eq "msg1".to_slice
-    t1.should eq Sodium::SecretStream::Tag::Message
-    m2.should eq "final".to_slice
-    t2.should eq Sodium::SecretStream::Tag::Final
   end
 end

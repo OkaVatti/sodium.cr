@@ -1,19 +1,15 @@
+# src/sodium/password/key.cr
 require "./abstract"
 require "./mode"
 require "../kdf"
 
 module Sodium::Password
-  # See `Sodium::Password::Key::Create`
-  #
-  # TODO: Usage example using the same params with multiple passwords.
   class Key < Abstract
-    # Used by and must be set before calling #derive_key
     property mode : Mode = Mode.default
-
     property salt : Bytes?
 
-    # Must set a mode before calling.
     def derive_key(pass : Bytes | String, key_bytes : Int32, *, salt : String | Bytes | Nil = nil) : SecureBuffer
+      raise ArgumentError.new("missing mode") unless @mode
       key = SecureBuffer.new key_bytes
       derive_key key, pass, salt: salt
       key.readonly
@@ -27,7 +23,6 @@ module Sodium::Password
     # :nodoc:
     def derive_key(key : Crypto::Secret, pass : Bytes | String, *, salt : Bytes? = nil) : Nil
       m = mode || raise ArgumentError.new("mode not set")
-
       salt ||= @salt
       raise ArgumentError.new("missing salt") unless salt
       salt = salt.not_nil!

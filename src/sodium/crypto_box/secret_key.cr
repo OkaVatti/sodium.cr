@@ -79,7 +79,7 @@ class Sodium::CryptoBox
     # Recomputes the public key from a secret key if missing.
     def initialize(bytes : Bytes, pkey : Bytes? = nil)
       raise ArgumentError.new("Secret key must be #{KEY_SIZE} bytes, got #{bytes.bytesize}") if bytes.bytesize != KEY_SIZE
-      @key = SecureBuffer.new bytes
+      @key = SecureBuffer.copy_from(bytes)
       if pk = pkey
         @public_key = PublicKey.new pk
       else
@@ -97,7 +97,7 @@ class Sodium::CryptoBox
     # Copies seed to a SecureBuffer.
     def initialize(*, seed : Bytes, erase = false)
       raise ArgumentError.new("Secret sign seed must be #{SEED_SIZE}, got #{seed.bytesize}") unless seed.bytesize == SEED_SIZE
-      @seed = seed = SecureBuffer.new seed, erase: erase
+      @seed = seed = SecureBuffer.copy_from(seed)
 
       @key = SecureBuffer.new KEY_SIZE
       @public_key = PublicKey.new
@@ -137,7 +137,7 @@ class Sodium::CryptoBox
     end
 
     # Create a new box and automatically close when the block exits.
-    def box(public_key)
+    def box(public_key, &)
       b = box public_key
       begin
         yield b

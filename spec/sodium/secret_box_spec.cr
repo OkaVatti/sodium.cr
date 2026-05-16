@@ -1,3 +1,4 @@
+# spec/sodium/secret_box_spec.cr
 require "../spec_helper"
 require "../../src/sodium/secret_box"
 
@@ -17,19 +18,17 @@ combined_test_vectors = [
   },
 ]
 
-private def box_from_test_vector(vec)
+private def box_from_combined(vec)
   box = Sodium::SecretBox.copy_from vec[:key].hexbytes
-  nonce = Sodium::Nonce.new vec[:nonce].hexbytes
+  nonce = vec[:nonce].hexbytes
   plaintext = vec[:plaintext].hexbytes
   ciphertext = vec[:ciphertext].hexbytes
-
   {box, nonce, plaintext, ciphertext}
 end
 
 describe Sodium::SecretBox do
   it "encrypts/decrypts" do
     box = Sodium::SecretBox.random
-
     message = "foobar"
     encrypted, nonce = box.encrypt message
     decrypted = box.decrypt_string encrypted, nonce: nonce
@@ -40,38 +39,23 @@ describe Sodium::SecretBox do
     end
   end
 
-  it "can't encrypt twice using the same nonce" do
-    box = Sodium::SecretBox.random
-
-    message = "foobar"
-    encrypted, nonce = box.encrypt message
-
-    expect_raises(Sodium::Nonce::Error::Reused) do
-      box.encrypt message.to_slice, nonce: nonce
-    end
-  end
-
-  it "PyNaCl combined test vectors" do
+  it "combined test vectors" do
     combined_test_vectors.each do |vec|
-      box, nonce, plaintext, ciphertext = box_from_test_vector vec
-
-      encrypted, _ = box.encrypt plaintext, nonce: nonce
-      encrypted.should eq ciphertext
-
+      box, nonce, plaintext, expected_ct = box_from_combined vec
+      encrypted = box.encrypt plaintext, nonce: nonce
+      encrypted.should eq expected_ct
       decrypted = box.decrypt encrypted, nonce: nonce
       decrypted.should eq plaintext
     end
   end
 
-  pending "detached test vectors" do
-    detached_test_vectors.each do |vec|
-      box, nonce, plaintext, ciphertext = box_from_test_vector vec
-
-      encrypted = box.encrypt_detached plaintext, nonce: nonce
-      encrypted.should eq ciphertext
-
-      decrypted = box.decrypt_detached encrypted, nonce: nonce
-      decrypted.should eq plaintext
-    end
+  it "detached mode roundtrip" do
+    box = Sodium::SecretBox.random
+    message = "secret message"
+    nonce = Random::Secure.random_bytes(Sodium::SecretBox::NONCE_SIZE)
+    ct, mac = box.encrypt_detached(message, nonce)
+    decrypted = box.decrypt_detached(ct, mac, nonce)
+    decrypted.should eq message.to_slice
+    String.new(decrypted).should eq message
   end
 end

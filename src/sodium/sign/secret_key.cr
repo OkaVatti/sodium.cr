@@ -73,7 +73,7 @@ module Sodium
     # Copies seed to a `SecureBuffer`
     def self.new(*, seed : Bytes, erase = false)
       raise ArgumentError.new("Secret sign seed must be #{SEED_SIZE}, got #{seed.bytesize}") unless seed.bytesize == SEED_SIZE
-      new(seed: SecureBuffer.new(seed, erase: erase))
+      new(seed: erase ? SecureBuffer.move_from(seed) : SecureBuffer.copy_from(seed))
     end
 
     # Derive a new secret/public key pair based on a consistent seed.
