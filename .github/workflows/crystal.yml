@@ -25,9 +25,6 @@ jobs:
             crystal: latest
             lint: true
 
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
     steps:
       - uses: actions/checkout@v4
 
