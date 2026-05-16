@@ -13,7 +13,7 @@ authors:
   - Didactic Drunk <1479616+didactic-drunk@users.noreply.github.com>
   - OkaVatti
 
-crystal: ">= 1.20.1, > 1.0.0"
+crystal: ">= 1.0.0, >= 1.20.1, < 2.0.0"
 
 repository: https://github.com/OkaVatti/sodium.cr
 homepage: https://github.com/OkaVatti/sodium.cr
