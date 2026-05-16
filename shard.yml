@@ -1,12 +1,10 @@
 name: sodium
 version: 1.3.0
-
 description: >
-  Crystal bindings for libsodium (NaCl), supporting all modern APIs
-  up to libsodium 1.0.22 — authenticated encryption, signatures,
-  hashing, password hashing, key exchange, post-quantum KEM, AEAD
-  (including AEGIS and AES256-GCM), secret streams, XOFs, SHA-3,
-  and more.
+  Crystal bindings for libsodium (NaCl), supporting all modern APIs up to
+  libsodium 1.0.22 — authenticated encryption, signatures, hashing, password
+  hashing, key exchange, post-quantum KEM, AEAD (including AEGIS and
+  AES256-GCM), secret streams, XOFs, SHA-3, and more.
 
 authors:
   - Andrew Hamon
@@ -35,9 +33,13 @@ libraries:
 license: MIT
 
 scripts:
-  postinstall: >
-    pkg-config --exists 'libsodium >= 1.0.22' ||
-    (echo 'libsodium >= 1.0.22 is required. Install it with your package manager.' >&2 && exit 1)
+  postinstall: |
+    . ./build/env.sh
+    pkg-config --exists 'libsodium >= 1.0.22' || {
+      echo 'libsodium >= 1.0.22 is required.' >&2
+      echo 'Install it with your package manager or set LIBSODIUM_INSTALL=1 and run ./build/libsodium_install.sh.' >&2
+      exit 1
+    }
 
 targets:
   blake2b_hash:
