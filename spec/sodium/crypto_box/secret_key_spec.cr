@@ -20,7 +20,7 @@ combined_test_vectors = [
   },
 ]
 
-private def box_from_vec(vec)
+private def box_from_vec(vec, &)
   alice = Sodium::CryptoBox::SecretKey.new vec[:alice_sec].hexbytes, vec[:alice_pub].hexbytes
   bob = Sodium::CryptoBox::SecretKey.new vec[:bob_sec].hexbytes, vec[:bob_pub].hexbytes
   nonce = Sodium::Nonce.new vec[:nonce].hexbytes

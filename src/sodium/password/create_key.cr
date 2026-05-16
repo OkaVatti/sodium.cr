@@ -92,7 +92,7 @@ class Sodium::Password::Key::Create
 
     # initial sample to avoid overshooting on busy systems
     # round to nearest pow2 / 3
-    mult = Math.pw2ceil ((@tcost / 3.0 / mean.to_f).ceil.to_i)
+    mult = Math.pw2ceil((@tcost / 3.0 / mean.to_f).ceil.to_i)
     pw.mem = (pw.mem * mult).clamp(@mem_min, @mem_max)
 
     last_mem = pw.mem
