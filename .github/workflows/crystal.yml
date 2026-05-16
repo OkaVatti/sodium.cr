@@ -2,54 +2,70 @@ name: Crystal CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [mother]
   pull_request:
-    branches: [ master ]
+    branches: [mother]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    name: "crystal: ${{ matrix.crystal }}, stable: ${{ matrix.stable }}"
-    continue-on-error: ${{ !matrix.stable }}
+  test:
+    name: "crystal ${{ matrix.crystal }} on ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        stable: [true]
+        os:
+          - ubuntu-latest
+          - macos-latest
         crystal:
-          - 1.0.0
-          - 1.1.0
-          - 1.1.1
-          - 1.2.0
+          - "1.0.0"
+          - "1.5.0"
+          - "1.10.0"
+          - latest
         include:
-          - crystal: nightly
-            stable: false
-
-    container:
-      image: crystallang/crystal:${{ matrix.crystal }}
+          - os: ubuntu-latest
+            crystal: nightly
+          - os: ubuntu-latest
+            crystal: latest
+            lint: true
 
     steps:
-    - uses: actions/checkout@v2
-    - name: apt update
-      run: apt update
-    - name: Install wget
-      run: apt-get install -y wget
-    - name: setenv DEBUG
-      run: echo "SODIUM_BUILD_DEBUG=1" >> $GITHUB_ENV
-    - name: setenv BUILD_DIR
-      run: echo "LIBSODIUM_BUILD_DIR=$HOME/libsodium" >> $GITHUB_ENV
-    - name: Cache libsodium
-      uses: actions/cache@v2
-      with:
-        path: ~/libsodium
-        key: ${{ runner.os }}-libsodium-${{ hashFiles('build/env.sh') }}
-    - name: Install dependencies
-      run: shards install
-    - name: Run tests
-      run: crystal spec -Dpreview_mt --order random
-    - name: Run bulid
-      run: shards build -Dpreview_mt
-    - name: Run format
-      run: crystal tool format --check
-    - name: Failed
-      if: ${{ failure() }}
-      run: "[ -f libsodium_install.out ] && cat libsodium_install.out"
+      - uses: actions/checkout@v4
+
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: ${{ matrix.crystal }}
+
+      - name: Install system libsodium (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsodium-dev
+
+      - name: Install system libsodium (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libsodium
+
+      - name: Cache shards
+        uses: actions/cache@v4
+        with:
+          path: lib
+          key: ${{ runner.os }}-shards-${{ hashFiles('shard.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-shards-
+
+      - name: Install shard dependencies
+        run: shards install
+
+      - name: Run tests
+        run: crystal spec --error-trace --order random
+
+      - name: Run build
+        run: shards build --error-trace
+
+      - name: Check formatting
+        run: crystal tool format --check
+
+      - name: Run linter
+        if: matrix.lint
+        run: bin/ameba
