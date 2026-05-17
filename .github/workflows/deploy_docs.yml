@@ -12,8 +12,10 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: crystal-lang/install-crystal@v1
         with:
@@ -22,7 +24,7 @@ jobs:
       - name: Install system libsodium
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsodium-dev
+          sudo apt-get install -y libsodium
 
       - name: Install shard dependencies
         run: shards install
