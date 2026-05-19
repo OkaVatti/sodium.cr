@@ -9,7 +9,7 @@ macro delegate_to_slice(to object)
 end
 
 module Sodium
-  @[Link(ldflags: "`#{__DIR__}/../../build/pkg-libs.sh #{__DIR__}/../..`")]
+  @[Link(ldflags: "`pkg-config --libs libsodium`")]
   lib LibSodium
     fun sodium_init : LibC::Int
 
@@ -298,23 +298,23 @@ module Sodium
       {% for name2 in %w(keybytes headerbytes statebytes abytes) %}
         fun crypto_secretstream{{ name.id }}_{{ name2.id }} : LibC::SizeT
       {% end %}
-        
+
       {% for name2 in %w(tag_rekey tag_push tag_final) %}
         fun crypto_secretstream{{ name.id }}_{{ name2.id }} : LibC::UChar
       {% end %}
-        
+
       fun crypto_secretstream{{ name.id }}_init_push(
         state : Pointer(LibC::UChar),
         header : Pointer(LibC::UChar),
         key : Pointer(LibC::UChar),
       ) : LibC::Int
-        
+
       fun crypto_secretstream{{ name.id }}_init_pull(
         state : Pointer(LibC::UChar),
         header : Pointer(LibC::UChar),
         key : Pointer(LibC::UChar),
       ) : LibC::Int
-        
+
       fun crypto_secretstream{{ name.id }}_push(
         state : Pointer(LibC::UChar),
         c : Pointer(LibC::UChar),
@@ -325,7 +325,7 @@ module Sodium
         adlen : LibC::ULongLong,
         tag : LibC::UChar,
       ) : LibC::Int
-        
+
       fun crypto_secretstream{{ name.id }}_pull(
         state : Pointer(LibC::UChar),
         m : Pointer(LibC::UChar),
@@ -336,7 +336,7 @@ module Sodium
         ad : Pointer(LibC::UChar),
         adlen : LibC::ULongLong,
       ) : LibC::Int
-        
+
       fun crypto_secretstream{{ name.id }}_rekey(state : Pointer(LibC::UChar)) : Nil
     {% end %}
 
