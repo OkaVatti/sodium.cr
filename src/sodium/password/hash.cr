@@ -19,6 +19,14 @@ module Sodium::Password
   #
   # Use `examples/pwhash_selector.cr` to help choose ops/mem limits.
   class Hash < Abstract
+    OPSLIMIT_INTERACTIVE = LibSodium.crypto_pwhash_opslimit_interactive
+    MEMLIMIT_INTERACTIVE = LibSodium.crypto_pwhash_memlimit_interactive
+
+    def initialize
+      @ops = OPSLIMIT_INTERACTIVE
+      @mem = MEMLIMIT_INTERACTIVE
+    end
+
     # Apply the most recent password hashing algorithm against a password.
     # Returns a opaque String which includes:
     # * the result of a memory-hard, CPU-intensive hash function applied to the password
