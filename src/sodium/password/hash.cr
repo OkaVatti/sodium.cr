@@ -19,6 +19,7 @@ module Sodium::Password
   #
   # Use `examples/pwhash_selector.cr` to help choose ops/mem limits.
   class Hash < Abstract
+    STR_SIZE             = LibSodium.crypto_pwhash_strbytes
     OPSLIMIT_INTERACTIVE = LibSodium.crypto_pwhash_opslimit_interactive
     MEMLIMIT_INTERACTIVE = LibSodium.crypto_pwhash_memlimit_interactive
 
